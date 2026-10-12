@@ -1,32 +1,41 @@
 package com.hoods.composestateyt.ui.transaction
 
 import com.hoods.composestateyt.data.Transaction
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 
-
-//TODO PROBLEM 1: giant flat state
-data class TransactionsUiState(
-    val items: List<Transaction> = emptyList(),
-    val page: Int = 0,
-    val pageSize: Int = 20,
-    val hasMore: Boolean = false,
-    val totalCount: Int = 0,
-    val isInitialLoading: Boolean = false,
-    val isLoadingMore: Boolean = false,
-    val isRefreshing: Boolean = false,
-    val errorMessage: String? = null,
-    val loadMoreError: String? = null,
-    val query: String = "",
-    val selectedCategory: String = "All",
-    val typeFilter: String = "All",
-    val periodFilter: String = "All",
-    val availableCategories: List<String> = listOf("All", "Groceries", "Income", "Transport", "Utilities", "Food", "Health", "Entertainment", "Education"),
+data class HeaderState(
     val totalIncome: Double = 0.0,
     val totalExpenses: Double = 0.0,
     val balance: Double = 0.0,
-    val isSummaryLoading: Boolean = false,
-    val summaryError: String? = null,
-    val isDeleting: Boolean = false,
-    val lastDeletedId: Int? = null,
-    val lastDeletedTransaction: Transaction? = null, //Todo Solution 1 remove state to state holder for UI states
-    val searchDebounceMillis: Long = 300L,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
 )
+
+data class FiltersState(
+    val query: String = "",
+    val availableCategories: ImmutableList<String> = persistentListOf("All", "Groceries", "Income", "Transport", "Utilities", "Food", "Health", "Entertainment", "Education"),
+    val selectedCategory: String = "All",
+    val typeFilter: String = "All",
+    val periodFilter: String = "All",
+)
+
+sealed interface ListState {
+    data object Loading : ListState
+    data class Error(val message: String) : ListState
+    data class Content(
+        val items: ImmutableList<Transaction>,
+        val hasMore: Boolean,
+        val isLoadingMore: Boolean,
+        val loadMoreFailed: Boolean,
+    ) : ListState
+}
+
+
+//TODO FIX 1: giant flat state
+data class TransactionsUiState(
+    val header: HeaderState = HeaderState(),
+    val filters: FiltersState = FiltersState(),
+    val list:ListState = ListState.Loading,
+)
+

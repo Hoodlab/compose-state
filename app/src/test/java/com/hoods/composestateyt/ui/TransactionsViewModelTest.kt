@@ -1,8 +1,10 @@
 package com.hoods.composestateyt.ui
 
 
+import app.cash.turbine.test
 import com.hoods.composestateyt.data.FakeTransactionRepository
 import com.hoods.composestateyt.data.Transaction
+import com.hoods.composestateyt.ui.transaction.ListState
 import com.hoods.composestateyt.ui.transaction.TransactionsUiState
 import com.hoods.composestateyt.ui.transaction.TransactionsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -32,108 +34,113 @@ class TransactionsViewModelTest {
     fun tearDown() {
         Dispatchers.resetMain()
     }
-
-    @Test
-    fun initialLoadPopulatesItemsAndSummary() = runTest(testDispatcher) {
-        val repository = FakeTransactionRepository(delayMillis = 0L)
-        val viewModel = TransactionsViewModel(repository)
-
-        advanceUntilIdle()
-
-        val state = viewModel.uiState.value
-        assertFalse(state.isInitialLoading)
-        assertTrue(state.items.isNotEmpty())
-        assertEquals(20, state.items.size)
-        assertTrue(state.totalCount > 20)
-        assertTrue(state.hasMore)
-    }
-
-    @Test
-    fun categoryFilterRequiresFullStateComparison() = runTest(testDispatcher) {
+    //TODO FIX 5: test needs full state
+    fun filterChangeResetsTheList() = runTest(testDispatcher) {
         val sampleList = listOf(
             Transaction(1, "Supermarket", "Groceries", -50.0, "2026-10-01"),
             Transaction(2, "Salary", "Income", 2000.0, "2026-10-02"),
         )
-        val repository =
-            FakeTransactionRepository(initialTransactions = sampleList, delayMillis = 0L)
+        val repository = FakeTransactionRepository(initialTransactions = sampleList, delayMillis = 0L)
         val viewModel = TransactionsViewModel(repository)
-        advanceUntilIdle()
 
-        viewModel.onCategorySelected("Groceries")
-        advanceUntilIdle()
+        viewModel.uiState.test {
+            advanceUntilIdle()
+            var state = expectMostRecentItem()
+            val initialContent = state.list as ListState.Content
+            assertEquals(2, initialContent.items.size)
 
-        //TODO PROBLEM 5: test needs full state
-        val expectedFullState = TransactionsUiState(
-            items = listOf(Transaction(1, "Supermarket", "Groceries", -50.0, "2026-10-01")),
-            page = 0,
-            pageSize = 20,
-            hasMore = false,
-            totalCount = 1,
-            isInitialLoading = false,
-            isLoadingMore = false,
-            isRefreshing = false,
-            errorMessage = null,
-            loadMoreError = null,
-            query = "",
-            selectedCategory = "Groceries",
-            typeFilter = "All",
-            periodFilter = "All",
-            availableCategories = listOf(
-                "All",
-                "Groceries",
-                "Income",
-                "Transport",
-                "Utilities",
-                "Food",
-                "Health",
-                "Entertainment",
-                "Education"
-            ),
-            totalIncome = 0.0,
-            totalExpenses = 50.0,
-            balance = -50.0,
-            isSummaryLoading = false,
-            summaryError = null,
-            isDeleting = false,
-            lastDeletedId = null,
-            lastDeletedTransaction = null,
-            searchDebounceMillis = 300L,
-        )
+            viewModel.onCategorySelected("Groceries")
+            advanceUntilIdle()
 
-        assertEquals(expectedFullState, viewModel.uiState.value)
+            state = expectMostRecentItem()
+            assertEquals("Groceries", state.filters.selectedCategory)
+            val filteredContent = state.list as ListState.Content
+            assertEquals(1, filteredContent.items.size)
+            assertEquals("Supermarket", filteredContent.items.first().title)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+
+
+    @Test
+    fun loadMoreAppendsItems() = runTest(testDispatcher) {
+        val repository = FakeTransactionRepository(delayMillis = 0L)
+        val viewModel = TransactionsViewModel(repository)
+
+        viewModel.uiState.test {
+            advanceUntilIdle()
+            var state = expectMostRecentItem()
+            val initialContent = state.list as ListState.Content
+            assertEquals(20, initialContent.items.size)
+            assertTrue(initialContent.hasMore)
+
+            viewModel.onLoadMore()
+            advanceUntilIdle()
+
+            state = expectMostRecentItem()
+            val updatedContent = state.list as ListState.Content
+            assertEquals(40, updatedContent.items.size)
+            assertFalse(updatedContent.isLoadingMore)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     @Test
-    fun deleteTransactionUpdatesStateAndRemovesItem() = runTest(testDispatcher) {
-        val item = Transaction(1, "Supermarket", "Groceries", -50.0, "2026-10-01")
-        val repository =
-            FakeTransactionRepository(initialTransactions = listOf(item), delayMillis = 0L)
-        val viewModel = TransactionsViewModel(repository)
-        advanceUntilIdle()
-
-        viewModel.onDeleteTransaction(item)
-        advanceUntilIdle()
-
-        val state = viewModel.uiState.value
-        assertTrue(state.items.isEmpty())
-        assertEquals(1, state.lastDeletedId)
-        assertEquals(item, state.lastDeletedTransaction)
-    }
-
-    @Test
-    fun retryLoadsDataAfterError() = runTest(testDispatcher) {
+    fun failureProducesExpectedListState() = runTest(testDispatcher) {
         val repository = FakeTransactionRepository(delayMillis = 0L)
         repository.setFailNextCall(true)
         val viewModel = TransactionsViewModel(repository)
-        advanceUntilIdle()
 
-        assertTrue(viewModel.uiState.value.errorMessage != null)
+        viewModel.uiState.test {
+            advanceUntilIdle()
+            val state = expectMostRecentItem()
+            assertTrue(state.list is ListState.Error)
+            assertEquals("Simulated network error", (state.list as ListState.Error).message)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 
-        viewModel.onRetry()
-        advanceUntilIdle()
+    @Test
+    fun retryRecoversFromFailure() = runTest(testDispatcher) {
+        val repository = FakeTransactionRepository(delayMillis = 0L)
+        repository.setFailNextCall(true)
+        val viewModel = TransactionsViewModel(repository)
 
-        assertFalse(viewModel.uiState.value.isInitialLoading)
-        assertEquals(null, viewModel.uiState.value.errorMessage)
-        assertTrue(viewModel.uiState.value.items.isNotEmpty())
+        viewModel.uiState.test {
+            advanceUntilIdle()
+            var state = expectMostRecentItem()
+            assertTrue(state.list is ListState.Error)
+
+            viewModel.onRetry()
+            advanceUntilIdle()
+
+            state = expectMostRecentItem()
+            assertTrue(state.list is ListState.Content)
+            assertEquals(20, (state.list as ListState.Content).items.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun deleteTransactionUpdatesListSection() = runTest(testDispatcher) {
+        val item = Transaction(1, "Supermarket", "Groceries", -50.0, "2026-10-01")
+        val repository = FakeTransactionRepository(initialTransactions = listOf(item), delayMillis = 0L)
+        val viewModel = TransactionsViewModel(repository)
+
+        viewModel.uiState.test {
+            advanceUntilIdle()
+            var state = expectMostRecentItem()
+            val content = state.list as ListState.Content
+            assertEquals(1, content.items.size)
+
+            viewModel.onDeleteTransaction(item)
+            advanceUntilIdle()
+
+            state = expectMostRecentItem()
+            val updatedContent = state.list as ListState.Content
+            assertTrue(updatedContent.items.isEmpty())
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }

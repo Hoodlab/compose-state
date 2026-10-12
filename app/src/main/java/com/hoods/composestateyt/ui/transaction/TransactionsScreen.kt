@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hoods.composestateyt.data.Transaction
+import kotlin.compareTo
 
 @Composable
 fun TransactionsRoute(
@@ -52,7 +54,12 @@ fun TransactionsRoute(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val screenState = rememberTransactionsScreenState()
 
-    LaunchedEffect(uiState.query, uiState.selectedCategory, uiState.typeFilter, uiState.periodFilter) {
+    LaunchedEffect(
+        uiState.filters.query,
+        uiState.filters.selectedCategory,
+        uiState.filters.typeFilter,
+        uiState.filters.periodFilter
+    ) {
         screenState.scrollToTop()
     }
 
@@ -60,9 +67,14 @@ fun TransactionsRoute(
         viewModel.events.collect { event ->
             when (event) {
                 is UiEvent.ShowSnackbar -> {
-                    val result = screenState.snackbarHostState.showSnackbar(event.message, event.actionLabel, duration = SnackbarDuration.Short)
+                    val result = screenState.snackbarHostState.showSnackbar(
+                        event.message,
+                        event.actionLabel,
+                        duration = SnackbarDuration.Short
+                    )
                     if (result == SnackbarResult.ActionPerformed) viewModel.onUndoDelete()
                 }
+
                 is UiEvent.NavigateToExport -> onExport()
             }
         }
@@ -82,6 +94,7 @@ fun TransactionsRoute(
         modifier = modifier,
     )
 }
+
 //TODO FIX 4: screen reads the whole state
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,92 +129,88 @@ fun TransactionsScreen(
             }
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize().padding(horizontal = 16.dp)) {
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("Income", style = MaterialTheme.typography.labelSmall); Text("$${"%.2f".format(uiState.totalIncome)}", color = Color(0xFF2E7D32)) }
-                    Column { Text("Expenses", style = MaterialTheme.typography.labelSmall); Text("$${"%.2f".format(uiState.totalExpenses)}", color = Color(0xFFC62828)) }
-                    Column { Text("Balance", style = MaterialTheme.typography.labelSmall); Text("$${"%.2f".format(uiState.balance)}", style = MaterialTheme.typography.titleMedium) }
-                }
-            }
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = uiState.query, onValueChange = onQueryChanged, placeholder = { Text("Search transactions...") }, modifier = Modifier.weight(1f))
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { screenState.openFilterSheet() }) { Text("Filters") }
-            }
+        Column(modifier = Modifier
+            .padding(padding)
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)) {
+            HeaderSection(state = uiState.header)
+            SearchAndFilters(
+                state = uiState.filters,
+                onQueryChanged = onQueryChanged,
+                onOpenFilterSheet = { screenState.openFilterSheet() })
             Spacer(Modifier.height(8.dp))
-            if (uiState.isInitialLoading) {
-                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            } else if (uiState.errorMessage != null) {
-                Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
-                    Text(uiState.errorMessage, color = MaterialTheme.colorScheme.error)
-                    Button(onClick = onRetry) { Text("Retry") }
-                }
-            } else if (uiState.items.isEmpty()) {
-                Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No transactions found.") }
-            } else {
-                LazyColumn(state = screenState.lazyListState, modifier = Modifier.weight(1f)) {
-                    items(uiState.items, key = { it.id }) { item ->
-                        ListItem(
-                            headlineContent = { Text(item.title) },
-                            supportingContent = { Text("${item.category} • ${item.date}") },
-                            trailingContent = {
-                                Text(
-                                    "${if (item.amount >= 0) "+" else ""}$${"%.2f".format(item.amount)}",
-                                    color = if (item.amount >= 0) Color(0xFF2E7D32) else Color(0xFFC62828)
-                                )
-                            },
-                            modifier = Modifier.clickable { screenState.selectTransaction(item.id) }
-                        )
-                        HorizontalDivider()
-                    }
-                    if (uiState.hasMore) {
-                        item {
-                            LaunchedEffect(Unit) { onLoadMore() }
-                            Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) {
-                                if (uiState.isLoadingMore) CircularProgressIndicator()
-                                else if (uiState.loadMoreError != null) Button(onClick = onRetry) { Text("Retry loading more") }
-                            }
-                        }
-                    }
-                }
-            }
+            TransactionList(
+                state = uiState.list,
+                lazyListState = screenState.lazyListState,
+                onTransactionClicked = { screenState.selectTransaction(it.id) },
+                onLoadMore = onLoadMore,
+                onRetry = onRetry,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 
     if (screenState.isFilterSheetOpen) {
         ModalBottomSheet(onDismissRequest = { screenState.closeFilterSheet() }) {
-            Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Column(Modifier
+                .padding(16.dp)
+                .fillMaxWidth()) {
                 Text("Filters", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 Text("Category", style = MaterialTheme.typography.labelLarge)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("All", "Groceries", "Income", "Transport").forEach { cat ->
-                        FilterChip(selected = uiState.selectedCategory == cat, onClick = { onCategorySelected(cat) }, label = { Text(cat) })
+                    listOf(
+                        "All",
+                        "Groceries",
+                        "Income",
+                        "Transport"
+                    ).forEach {
+                        FilterChip(
+                            selected = uiState.filters.selectedCategory == it,
+                            onClick = { onCategorySelected(it) },
+                            label = { Text(it) })
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("Type", style = MaterialTheme.typography.labelLarge)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("All", "Income", "Expense").forEach { type ->
-                        FilterChip(selected = uiState.typeFilter == type, onClick = { onTypeFilterChanged(type) }, label = { Text(type) })
+                    listOf(
+                        "All",
+                        "Income",
+                        "Expense"
+                    ).forEach {
+                        FilterChip(
+                            selected = uiState.filters.typeFilter == it,
+                            onClick = { onTypeFilterChanged(it) },
+                            label = { Text(it) })
                     }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("Period", style = MaterialTheme.typography.labelLarge)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("All", "This Week", "This Month").forEach { period ->
-                        FilterChip(selected = uiState.periodFilter == period, onClick = { onPeriodFilterChanged(period) }, label = { Text(period) })
+                    listOf(
+                        "All",
+                        "This Week",
+                        "This Month"
+                    ).forEach {
+                        FilterChip(
+                            selected = uiState.filters.periodFilter == it,
+                            onClick = { onPeriodFilterChanged(it) },
+                            label = { Text(it) })
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { screenState.closeFilterSheet() }, Modifier.align(Alignment.End)) { Text("Done") }
+                Button(
+                    onClick = { screenState.closeFilterSheet() },
+                    Modifier.align(Alignment.End)
+                ) { Text("Done") }
             }
         }
     }
 
     if (screenState.isDetailDialogOpen) {
-        val selectedTx = uiState.items.find { it.id == screenState.selectedTransactionId }
+        val content = uiState.list as? ListState.Content
+        val selectedTx = content?.items?.find { it.id == screenState.selectedTransactionId }
         if (selectedTx != null) {
             AlertDialog(
                 onDismissRequest = { screenState.dismissDetailDialog() },
@@ -216,15 +225,139 @@ fun TransactionsScreen(
                 },
                 confirmButton = {
                     Button(
-                        onClick = {
-                            onDeleteTransaction(selectedTx)
-                            screenState.dismissDetailDialog()
-                        },
+                        onClick = { onDeleteTransaction(selectedTx); screenState.dismissDetailDialog() },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) { Text("Delete") }
                 },
-                dismissButton = { TextButton(onClick = { screenState.dismissDetailDialog() }) { Text("Close") } }
+                dismissButton = {
+                    TextButton(onClick = { screenState.dismissDetailDialog() }) {
+                        Text(
+                            "Close"
+                        )
+                    }
+                }
             )
+        }
+    }
+}
+
+@Composable
+fun HeaderSection(state: HeaderState, modifier: Modifier = Modifier) {
+    Card(modifier = modifier
+        .fillMaxWidth()
+        .padding(vertical = 8.dp)) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    "Income",
+                    style = MaterialTheme.typography.labelSmall
+                ); Text("$${"%.2f".format(state.totalIncome)}", color = Color(0xFF2E7D32))
+            }
+            Column {
+                Text(
+                    "Expenses",
+                    style = MaterialTheme.typography.labelSmall
+                ); Text("$${"%.2f".format(state.totalExpenses)}", color = Color(0xFFC62828))
+            }
+            Column {
+                Text(
+                    "Balance",
+                    style = MaterialTheme.typography.labelSmall
+                ); Text(
+                "$${"%.2f".format(state.balance)}",
+                style = MaterialTheme.typography.titleMedium
+            )
+            }
+        }
+    }
+}
+
+@Composable
+fun SearchAndFilters(
+    state: FiltersState,
+    onQueryChanged: (String) -> Unit,
+    onOpenFilterSheet: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = state.query,
+            onValueChange = onQueryChanged,
+            placeholder = { Text("Search transactions...") },
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(Modifier.width(8.dp))
+        Button(onClick = onOpenFilterSheet) { Text("Filters") }
+    }
+}
+
+@Composable
+fun TransactionList(
+    state: ListState, lazyListState: LazyListState,
+    onTransactionClicked: (Transaction) -> Unit,
+    onLoadMore: () -> Unit, onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        when (state) {
+            is ListState.Loading -> Box(
+                Modifier.fillMaxSize(),
+                Alignment.Center
+            ) { CircularProgressIndicator() }
+
+            is ListState.Error -> Column(
+                Modifier.fillMaxSize(),
+                Arrangement.Center,
+                Alignment.CenterHorizontally
+            ) {
+                Text(state.message, color = MaterialTheme.colorScheme.error)
+                Button(onClick = onRetry) { Text("Retry") }
+            }
+
+            is ListState.Content -> {
+                if (state.items.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No transactions found.") }
+                } else {
+                    LazyColumn(state = lazyListState, modifier = Modifier.fillMaxSize()) {
+                        items(state.items, key = { it.id }) { item ->
+                            ListItem(
+                                headlineContent = { Text(item.title) },
+                                supportingContent = { Text("${item.category} • ${item.date}") },
+                                trailingContent = {
+                                    Text(
+                                        "${if (item.amount >= 0) "+" else ""}$${"%.2f".format(item.amount)}",
+                                        color = if (item.amount >= 0) Color(0xFF2E7D32) else Color(
+                                            0xFFC62828
+                                        )
+                                    )
+                                },
+                                modifier = Modifier.clickable { onTransactionClicked(item) }
+                            )
+                            HorizontalDivider()
+                        }
+                        if (state.hasMore) {
+                            item {
+                                LaunchedEffect(Unit) { onLoadMore() }
+                                Box(Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp), Alignment.Center) {
+                                    if (state.isLoadingMore) CircularProgressIndicator()
+                                    else if (state.loadMoreFailed) Button(onClick = onRetry) {
+                                        Text(
+                                            "Retry loading more"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

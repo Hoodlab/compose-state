@@ -5,13 +5,18 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hoods.composestateyt.data.Transaction
 import com.hoods.composestateyt.data.TransactionRepository
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNot
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.collections.filterNot
@@ -25,14 +30,22 @@ class TransactionsViewModel(
     private val repository: TransactionRepository,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(TransactionsUiState())
-    val uiState: StateFlow<TransactionsUiState> = _uiState.asStateFlow()
+    private val _header = MutableStateFlow(HeaderState(isLoading = true))
+    private val _filters = MutableStateFlow(FiltersState())
+    private val _list = MutableStateFlow<ListState>(ListState.Loading)
+
 
     //TODO PROBLEM 3: ViewModel coordinates UI actions
     private val eventChannel = Channel<UiEvent>(Channel.BUFFERED)
     val events = eventChannel.receiveAsFlow()
 
     private var searchJob: Job? = null
+    private var currentPage = 0
+    private var lastDeletedTransaction: Transaction? = null
+    val uiState: StateFlow<TransactionsUiState> =
+        combine(_header, _filters, _list, ::TransactionsUiState)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState())
+
     private var loadJob: Job? = null
 
     init {
@@ -41,109 +54,96 @@ class TransactionsViewModel(
 
     //Hoisting UI element state to ViewModel when business logic needs it
     fun onQueryChanged(newQuery: String) {
-        _uiState.update { it.copy(query = newQuery) }
+        _filters.update { it.copy(query = newQuery) }
         searchJob?.cancel()
-        searchJob = viewModelScope.launch {
-            delay(_uiState.value.searchDebounceMillis)
-            loadInitialData()
-        }
+        searchJob = viewModelScope.launch { delay(300L); loadInitialData() }
     }
 
     fun onCategorySelected(category: String) {
-        _uiState.update { it.copy(selectedCategory = category) }
+        _filters.update { it.copy(selectedCategory = category) }
         loadInitialData()
     }
 
     fun onTypeFilterChanged(type: String) {
-        _uiState.update { it.copy(typeFilter = type) }
+        _filters.update {
+            it.copy(typeFilter = type)
+        }
         loadInitialData()
     }
 
     fun onPeriodFilterChanged(period: String) {
-        _uiState.update { it.copy(periodFilter = period) }
+        _filters.update { it.copy(periodFilter = period) }
         loadInitialData()
     }
+
     fun onDeleteTransaction(transaction: Transaction) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isDeleting = true) }
             try {
-                val deleted = repository.deleteTransaction(transaction.id)
-                if (deleted != null) {
-                    val updatedItems = _uiState.value.items.filterNot { it.id == transaction.id }
-                    _uiState.update {
-                        it.copy(
-                            items = updatedItems,
-                            isDeleting = false,
-                            lastDeletedId = transaction.id,
-                            lastDeletedTransaction = transaction,
-                            totalCount = (it.totalCount - 1).coerceAtLeast(0),
-                        )
+                if (repository.deleteTransaction(transaction.id) != null) {
+                    lastDeletedTransaction = transaction
+                    val current = _list.value
+                    if (current is ListState.Content) {
+                        _list.value =
+                            current.copy(items = current.items.filterNot { it.id == transaction.id }
+                                .toImmutableList())
                     }
                     loadSummary()
                     eventChannel.send(UiEvent.ShowSnackbar("Deleted ${transaction.title}", "Undo"))
-                } else {
-                    _uiState.update { it.copy(isDeleting = false) }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isDeleting = false, errorMessage = e.message ?: "Failed to delete") }
-                eventChannel.send(UiEvent.ShowSnackbar("Failed to delete transaction", null))
+                eventChannel.send(UiEvent.ShowSnackbar("Failed to delete transaction"))
             }
         }
     }
 
     fun onUndoDelete() {
-        val toRestore = _uiState.value.lastDeletedTransaction ?: return
+        val toRestore = lastDeletedTransaction ?: return
         viewModelScope.launch {
             try {
                 repository.restoreTransaction(toRestore)
-                _uiState.update {
-                    it.copy(
-                        lastDeletedTransaction = null,
-                        lastDeletedId = null,
-                    )
-                }
+                lastDeletedTransaction = null
                 loadInitialData()
-                eventChannel.send(UiEvent.ShowSnackbar("Restored ${toRestore.title}", null))
+                eventChannel.send(UiEvent.ShowSnackbar("Restored ${toRestore.title}"))
             } catch (e: Exception) {
-                eventChannel.send(UiEvent.ShowSnackbar("Failed to restore transaction", null))
+                eventChannel.send(UiEvent.ShowSnackbar("Failed to restore transaction"))
             }
         }
     }
 
     fun onLoadMore() {
-        val current = _uiState.value
-        if (current.isLoadingMore || !current.hasMore || current.isInitialLoading) return
+        val current = _list.value
+        if (current !is ListState.Content || current.isLoadingMore || !current.hasMore) return
 
         viewModelScope.launch {
-            val nextPage = current.page + 1
-            _uiState.update { it.copy(isLoadingMore = true, loadMoreError = null) }
+            val nextPage = currentPage + 1
+            _list.value = current.copy(isLoadingMore = true, loadMoreFailed = false)
             try {
+                val f = _filters.value
                 val result = repository.getTransactions(
-                    query = current.query,
-                    category = current.selectedCategory,
-                    type = current.typeFilter,
-                    period = current.periodFilter,
-                    page = nextPage,
-                    pageSize = current.pageSize,
+                    f.query,
+                    f.selectedCategory,
+                    f.typeFilter,
+                    f.periodFilter,
+                    nextPage,
+                    20
                 )
-                _uiState.update {
-                    it.copy(
-                        items = it.items + result.items,
-                        page = nextPage,
-                        hasMore = result.hasMore,
-                        totalCount = result.totalCount,
-                        isLoadingMore = false,
-                    )
-                }
+                currentPage = nextPage
+                _list.value = ListState.Content(
+                    (current.items + result.items).toImmutableList(),
+                    result.hasMore,
+                    false,
+                    false
+                )
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoadingMore = false, loadMoreError = e.message ?: "Load more failed") }
+                _list.value = current.copy(isLoadingMore = false, loadMoreFailed = true)
                 eventChannel.send(UiEvent.ShowSnackbar("Failed to load more items", "Retry"))
             }
         }
     }
 
     fun onRetry() {
-        if (_uiState.value.loadMoreError != null) {
+        val current = _list.value
+        if (current is ListState.Content && current.loadMoreFailed) {
             onLoadMore()
         } else {
             loadInitialData()
@@ -158,70 +158,53 @@ class TransactionsViewModel(
 
 
     private fun loadInitialData() {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            val current = _uiState.value
-            _uiState.update {
-                it.copy(
-                    isInitialLoading = true,
-                    errorMessage = null,
-                    page = 0,
-                )
-            }
+        currentPage = 0
+        _list.value = ListState.Loading
+        viewModelScope.launch {
+            val f = _filters.value
             try {
                 val result = repository.getTransactions(
-                    query = current.query,
-                    category = current.selectedCategory,
-                    type = current.typeFilter,
-                    period = current.periodFilter,
-                    page = 0,
-                    pageSize = current.pageSize,
+                    f.query,
+                    f.selectedCategory,
+                    f.typeFilter,
+                    f.periodFilter,
+                    0,
+                    20
                 )
-                _uiState.update {
-                    it.copy(
-                        items = result.items,
-                        totalCount = result.totalCount,
-                        hasMore = result.hasMore,
-                        isInitialLoading = false,
-                    )
-                }
+                _list.value = ListState.Content(
+                    result.items.toImmutableList(),
+                    result.hasMore,
+                    false,
+                    false
+                )
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isInitialLoading = false,
-                        errorMessage = e.message ?: "Network error occurred",
-                    )
-                }
+                _list.value = ListState.Error(e.message ?: "Network error occurred")
             }
             loadSummary()
         }
     }
 
     private suspend fun loadSummary() {
-        val current = _uiState.value
-        _uiState.update { it.copy(isSummaryLoading = true, summaryError = null) }
+        val f = _filters.value
+        _header.value = _header.value.copy(isLoading = true, errorMessage = null)
         try {
-            val summary = repository.getSummary(
-                query = current.query,
-                category = current.selectedCategory,
-                type = current.typeFilter,
-                period = current.periodFilter,
+            val s = repository.getSummary(
+                f.query,
+                f.selectedCategory,
+                f.typeFilter,
+                f.periodFilter
             )
-            _uiState.update {
-                it.copy(
-                    totalIncome = summary.totalIncome,
-                    totalExpenses = summary.totalExpenses,
-                    balance = summary.balance,
-                    isSummaryLoading = false,
-                )
-            }
+            _header.value = HeaderState(
+                totalIncome = s.totalIncome,
+                totalExpenses = s.totalExpenses,
+                balance = s.balance,
+                isLoading = false
+            )
         } catch (e: Exception) {
-            _uiState.update {
-                it.copy(
-                    isSummaryLoading = false,
-                    summaryError = e.message ?: "Failed to load summary",
-                )
-            }
+            _header.value = _header.value.copy(
+                isLoading = false,
+                errorMessage = e.message ?: "Failed to load summary"
+            )
         }
     }
 }
