@@ -7,24 +7,15 @@ import com.hoods.composestateyt.data.Transaction
 import com.hoods.composestateyt.data.TransactionRepository
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.filterNot
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.collections.filterNot
 
-sealed interface UiEvent {
-    data class ShowSnackbar(val message: String, val actionLabel: String? = null) : UiEvent
-    data object NavigateToExport : UiEvent
-}
 
 class TransactionsViewModel(
     private val repository: TransactionRepository,
@@ -35,15 +26,21 @@ class TransactionsViewModel(
     private val _list = MutableStateFlow<ListState>(ListState.Loading)
 
 
-    //TODO PROBLEM 3: ViewModel coordinates UI actions
-    private val eventChannel = Channel<UiEvent>(Channel.BUFFERED)
-    val events = eventChannel.receiveAsFlow()
+    //TODO FIX 3: ViewModel coordinates UI actions
+    private val _userMessage = MutableStateFlow<UserMessage?>(null)
+    private var nextMessageId = 1L
 
     private var searchJob: Job? = null
     private var currentPage = 0
     private var lastDeletedTransaction: Transaction? = null
     val uiState: StateFlow<TransactionsUiState> =
-        combine(_header, _filters, _list, ::TransactionsUiState)
+        combine(
+            _header,
+            _filters,
+            _list,
+            _userMessage,
+            ::TransactionsUiState
+        )
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TransactionsUiState())
 
     private var loadJob: Job? = null
@@ -88,12 +85,23 @@ class TransactionsViewModel(
                                 .toImmutableList())
                     }
                     loadSummary()
-                    eventChannel.send(UiEvent.ShowSnackbar("Deleted ${transaction.title}", "Undo"))
+                    _userMessage.value = UserMessage(
+                        nextMessageId++,
+                        "Deleted ${transaction.title}",
+                        UndoDelete(transaction)
+                    )
                 }
             } catch (e: Exception) {
-                eventChannel.send(UiEvent.ShowSnackbar("Failed to delete transaction"))
+                _userMessage.value = UserMessage(
+                    nextMessageId++,
+                    "Failed to delete transaction"
+                )
             }
         }
+    }
+
+    fun onMessageShown(id: Long) {
+        _userMessage.update { current -> if (current?.id == id) null else current }
     }
 
     fun onUndoDelete() {
@@ -103,9 +111,15 @@ class TransactionsViewModel(
                 repository.restoreTransaction(toRestore)
                 lastDeletedTransaction = null
                 loadInitialData()
-                eventChannel.send(UiEvent.ShowSnackbar("Restored ${toRestore.title}"))
+                _userMessage.value = UserMessage(
+                    nextMessageId++,
+                    "Restored ${toRestore.title}"
+                )
             } catch (e: Exception) {
-                eventChannel.send(UiEvent.ShowSnackbar("Failed to restore transaction"))
+                _userMessage.value = UserMessage(
+                    nextMessageId++,
+                    "Failed to restore transaction"
+                )
             }
         }
     }
@@ -136,7 +150,7 @@ class TransactionsViewModel(
                 )
             } catch (e: Exception) {
                 _list.value = current.copy(isLoadingMore = false, loadMoreFailed = true)
-                eventChannel.send(UiEvent.ShowSnackbar("Failed to load more items", "Retry"))
+                _userMessage.value = UserMessage(nextMessageId++, "Failed to load more items")
             }
         }
     }
@@ -147,12 +161,6 @@ class TransactionsViewModel(
             onLoadMore()
         } else {
             loadInitialData()
-        }
-    }
-
-    fun onExportClicked() {
-        viewModelScope.launch {
-            eventChannel.send(UiEvent.NavigateToExport)
         }
     }
 

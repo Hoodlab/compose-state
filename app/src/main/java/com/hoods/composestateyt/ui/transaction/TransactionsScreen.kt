@@ -37,6 +37,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,22 +63,18 @@ fun TransactionsRoute(
     ) {
         screenState.scrollToTop()
     }
+    val currentOnUndoDelete by rememberUpdatedState(viewModel::onUndoDelete)
+    val currentOnMessageShown by rememberUpdatedState(viewModel::onMessageShown)
 
-    LaunchedEffect(viewModel.events) {
-        viewModel.events.collect { event ->
-            when (event) {
-                is UiEvent.ShowSnackbar -> {
-                    val result = screenState.snackbarHostState.showSnackbar(
-                        event.message,
-                        event.actionLabel,
-                        duration = SnackbarDuration.Short
-                    )
-                    if (result == SnackbarResult.ActionPerformed) viewModel.onUndoDelete()
-                }
-
-                is UiEvent.NavigateToExport -> onExport()
-            }
-        }
+    LaunchedEffect(uiState.userMessage?.id) {
+        val message = uiState.userMessage ?: return@LaunchedEffect
+        val result = screenState.snackbarHostState.showSnackbar(
+            message = message.text,
+            actionLabel = if (message.undo != null) "Undo" else null,
+            duration = SnackbarDuration.Short
+        )
+        if (result == SnackbarResult.ActionPerformed) currentOnUndoDelete()
+        currentOnMessageShown(message.id)
     }
 
     TransactionsScreen(
@@ -90,7 +87,7 @@ fun TransactionsRoute(
         onDeleteTransaction = viewModel::onDeleteTransaction,
         onLoadMore = viewModel::onLoadMore,
         onRetry = viewModel::onRetry,
-        onExportClicked = viewModel::onExportClicked,
+        onExportClicked = onExport,
         modifier = modifier,
     )
 }

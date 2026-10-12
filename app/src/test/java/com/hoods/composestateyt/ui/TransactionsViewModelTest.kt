@@ -5,7 +5,6 @@ import app.cash.turbine.test
 import com.hoods.composestateyt.data.FakeTransactionRepository
 import com.hoods.composestateyt.data.Transaction
 import com.hoods.composestateyt.ui.transaction.ListState
-import com.hoods.composestateyt.ui.transaction.TransactionsUiState
 import com.hoods.composestateyt.ui.transaction.TransactionsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi

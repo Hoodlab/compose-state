@@ -31,11 +31,22 @@ sealed interface ListState {
     ) : ListState
 }
 
+data class UndoDelete(
+    val transaction: Transaction,
+)
+
+data class UserMessage(
+    val id: Long,
+    val text: String,
+    val undo: UndoDelete? = null,
+)
+
 
 //TODO FIX 1: giant flat state
 data class TransactionsUiState(
     val header: HeaderState = HeaderState(),
     val filters: FiltersState = FiltersState(),
     val list:ListState = ListState.Loading,
+    val userMessage: UserMessage? = null,
 )
 
