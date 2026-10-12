@@ -1,83 +1,116 @@
 package com.hoods.composestateyt.ui.transaction
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hoods.composestateyt.data.Transaction
-import kotlinx.coroutines.flow.Flow
 
-//TODO PROBLEM 4: screen reads the whole state
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TransactionsScreen(
-    uiState: TransactionsUiState,
-    events: Flow<UiEvent>,
-    onQueryChanged: (String) -> Unit,
-    onCategorySelected: (String) -> Unit,
-    onTypeFilterChanged: (String) -> Unit,
-    onPeriodFilterChanged: (String) -> Unit,
-    onFilterSheetVisibilityChanged: (Boolean) -> Unit,
-    onTransactionClicked: (Transaction) -> Unit,
-    onDismissDetailDialog: () -> Unit,
-    onDeleteTransaction: (Transaction) -> Unit,
-    onUndoDelete: () -> Unit,
-    onLoadMore: () -> Unit,
-    onRetry: () -> Unit,
-    onScrollToTop: () -> Unit,
-    onScrollPositionChanged: (Int) -> Unit,
-    onExportClicked: () -> Unit,
+fun TransactionsRoute(
+    viewModel: TransactionsViewModel,
     onExport: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    //TODO PROBLEM 2: two writers for one concept
-    var localFilterSheetOpen by rememberSaveable { mutableStateOf(uiState.isFilterSheetOpen) }
-    LaunchedEffect(uiState.isFilterSheetOpen) {
-        if (localFilterSheetOpen != uiState.isFilterSheetOpen) localFilterSheetOpen = uiState.isFilterSheetOpen
-    }
-    LaunchedEffect(localFilterSheetOpen) {
-        if (uiState.isFilterSheetOpen != localFilterSheetOpen) onFilterSheetVisibilityChanged(localFilterSheetOpen)
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val screenState = rememberTransactionsScreenState()
+
+    LaunchedEffect(uiState.query, uiState.selectedCategory, uiState.typeFilter, uiState.periodFilter) {
+        screenState.scrollToTop()
     }
 
-    val snackbarHostState = remember { SnackbarHostState() }
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(events) {
-        events.collect { event ->
+    LaunchedEffect(viewModel.events) {
+        viewModel.events.collect { event ->
             when (event) {
                 is UiEvent.ShowSnackbar -> {
-                    val result = snackbarHostState.showSnackbar(event.message, event.actionLabel, duration = SnackbarDuration.Short)
-                    if (result == SnackbarResult.ActionPerformed) onUndoDelete()
+                    val result = screenState.snackbarHostState.showSnackbar(event.message, event.actionLabel, duration = SnackbarDuration.Short)
+                    if (result == SnackbarResult.ActionPerformed) viewModel.onUndoDelete()
                 }
-                is UiEvent.ScrollToTop -> listState.animateScrollToItem(0)
                 is UiEvent.NavigateToExport -> onExport()
             }
         }
     }
 
-    LaunchedEffect(listState.firstVisibleItemIndex) {
-        onScrollPositionChanged(listState.firstVisibleItemIndex)
-    }
-
+    TransactionsScreen(
+        uiState = uiState,
+        screenState = screenState,
+        onQueryChanged = viewModel::onQueryChanged,
+        onCategorySelected = viewModel::onCategorySelected,
+        onTypeFilterChanged = viewModel::onTypeFilterChanged,
+        onPeriodFilterChanged = viewModel::onPeriodFilterChanged,
+        onDeleteTransaction = viewModel::onDeleteTransaction,
+        onLoadMore = viewModel::onLoadMore,
+        onRetry = viewModel::onRetry,
+        onExportClicked = viewModel::onExportClicked,
+        modifier = modifier,
+    )
+}
+//TODO FIX 4: screen reads the whole state
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TransactionsScreen(
+    uiState: TransactionsUiState,
+    screenState: TransactionsScreenState,
+    onQueryChanged: (String) -> Unit,
+    onCategorySelected: (String) -> Unit,
+    onTypeFilterChanged: (String) -> Unit,
+    onPeriodFilterChanged: (String) -> Unit,
+    onDeleteTransaction: (Transaction) -> Unit,
+    onLoadMore: () -> Unit,
+    onRetry: () -> Unit,
+    onExportClicked: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    //TODO FIX 2: two writers for one concept
     Scaffold(
+        modifier = modifier,
         topBar = {
             TopAppBar(
                 title = { Text("Transactions Dashboard") },
                 actions = { TextButton(onClick = onExportClicked) { Text("Export") } }
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { SnackbarHost(screenState.snackbarHostState) },
         floatingActionButton = {
-            if (uiState.showScrollToTopButton) {
-                FloatingActionButton(onClick = { onScrollToTop() }) {
+            if (screenState.showScrollToTopButton) {
+                FloatingActionButton(onClick = { screenState.scrollToTop() }) {
                     Text("▲", style = MaterialTheme.typography.titleMedium)
                 }
             }
@@ -94,7 +127,7 @@ fun TransactionsScreen(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = uiState.query, onValueChange = onQueryChanged, placeholder = { Text("Search transactions...") }, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
-                Button(onClick = { localFilterSheetOpen = true }) { Text("Filters") }
+                Button(onClick = { screenState.openFilterSheet() }) { Text("Filters") }
             }
             Spacer(Modifier.height(8.dp))
             if (uiState.isInitialLoading) {
@@ -107,7 +140,7 @@ fun TransactionsScreen(
             } else if (uiState.items.isEmpty()) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No transactions found.") }
             } else {
-                LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+                LazyColumn(state = screenState.lazyListState, modifier = Modifier.weight(1f)) {
                     items(uiState.items, key = { it.id }) { item ->
                         ListItem(
                             headlineContent = { Text(item.title) },
@@ -118,7 +151,7 @@ fun TransactionsScreen(
                                     color = if (item.amount >= 0) Color(0xFF2E7D32) else Color(0xFFC62828)
                                 )
                             },
-                            modifier = Modifier.clickable { onTransactionClicked(item) }
+                            modifier = Modifier.clickable { screenState.selectTransaction(item.id) }
                         )
                         HorizontalDivider()
                     }
@@ -136,8 +169,8 @@ fun TransactionsScreen(
         }
     }
 
-    if (localFilterSheetOpen) {
-        ModalBottomSheet(onDismissRequest = { localFilterSheetOpen = false }) {
+    if (screenState.isFilterSheetOpen) {
+        ModalBottomSheet(onDismissRequest = { screenState.closeFilterSheet() }) {
             Column(Modifier.padding(16.dp).fillMaxWidth()) {
                 Text("Filters", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
@@ -162,26 +195,37 @@ fun TransactionsScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { localFilterSheetOpen = false }, Modifier.align(Alignment.End)) { Text("Done") }
+                Button(onClick = { screenState.closeFilterSheet() }, Modifier.align(Alignment.End)) { Text("Done") }
             }
         }
     }
 
-    if (uiState.isDetailDialogOpen && uiState.selectedTransaction != null) {
-        val tx = uiState.selectedTransaction
-        AlertDialog(
-            onDismissRequest = onDismissDetailDialog,
-            title = { Text(tx.title) },
-            text = {
-                Column {
-                    Text("Category: ${tx.category}")
-                    Text("Amount: $${"%.2f".format(tx.amount)}")
-                    Text("Date: ${tx.date}")
-                    Text("Type: ${tx.type}")
-                }
-            },
-            confirmButton = { Button(onClick = { onDeleteTransaction(tx) }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = onDismissDetailDialog) { Text("Close") } }
-        )
+    if (screenState.isDetailDialogOpen) {
+        val selectedTx = uiState.items.find { it.id == screenState.selectedTransactionId }
+        if (selectedTx != null) {
+            AlertDialog(
+                onDismissRequest = { screenState.dismissDetailDialog() },
+                title = { Text(selectedTx.title) },
+                text = {
+                    Column {
+                        Text("Category: ${selectedTx.category}")
+                        Text("Amount: $${"%.2f".format(selectedTx.amount)}")
+                        Text("Date: ${selectedTx.date}")
+                        Text("Type: ${selectedTx.type}")
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onDeleteTransaction(selectedTx)
+                            screenState.dismissDetailDialog()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Delete") }
+                },
+                dismissButton = { TextButton(onClick = { screenState.dismissDetailDialog() }) { Text("Close") } }
+            )
+        }
     }
 }
+

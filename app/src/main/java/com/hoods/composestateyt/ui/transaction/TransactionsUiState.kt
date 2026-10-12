@@ -27,16 +27,6 @@ data class TransactionsUiState(
     val summaryError: String? = null,
     val isDeleting: Boolean = false,
     val lastDeletedId: Int? = null,
-    val lastDeletedTransaction: Transaction? = null,
-    val isFilterSheetOpen: Boolean = false,
-    val isDetailDialogOpen: Boolean = false,
-    val selectedTransactionId: Int? = null,
-    val selectedTransaction: Transaction? = null,
-    val scrollToTopRequested: Boolean = false,
-    val showScrollToTopButton: Boolean = false,
-    val firstVisibleItemIndex: Int = 0,
-    val snackbarMessage: String? = null,
-    val exportRequested: Boolean = false,
-    val isExportSuccessDialogOpen: Boolean = false,
+    val lastDeletedTransaction: Transaction? = null, //Todo Solution 1 remove state to state holder for UI states
     val searchDebounceMillis: Long = 300L,
 )

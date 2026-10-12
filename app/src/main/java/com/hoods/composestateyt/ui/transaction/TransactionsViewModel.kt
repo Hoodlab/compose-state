@@ -18,7 +18,6 @@ import kotlin.collections.filterNot
 
 sealed interface UiEvent {
     data class ShowSnackbar(val message: String, val actionLabel: String? = null) : UiEvent
-    data object ScrollToTop : UiEvent
     data object NavigateToExport : UiEvent
 }
 
@@ -40,67 +39,33 @@ class TransactionsViewModel(
         loadInitialData()
     }
 
+    //Hoisting UI element state to ViewModel when business logic needs it
     fun onQueryChanged(newQuery: String) {
         _uiState.update { it.copy(query = newQuery) }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(_uiState.value.searchDebounceMillis)
             loadInitialData()
-            eventChannel.send(UiEvent.ScrollToTop)
         }
     }
 
     fun onCategorySelected(category: String) {
         _uiState.update { it.copy(selectedCategory = category) }
         loadInitialData()
-        viewModelScope.launch {
-            eventChannel.send(UiEvent.ScrollToTop)
-        }
     }
 
     fun onTypeFilterChanged(type: String) {
         _uiState.update { it.copy(typeFilter = type) }
         loadInitialData()
-        viewModelScope.launch {
-            eventChannel.send(UiEvent.ScrollToTop)
-        }
     }
 
     fun onPeriodFilterChanged(period: String) {
         _uiState.update { it.copy(periodFilter = period) }
         loadInitialData()
-        viewModelScope.launch {
-            eventChannel.send(UiEvent.ScrollToTop)
-        }
     }
-
-    fun onFilterSheetVisibilityChanged(open: Boolean) {
-        _uiState.update { it.copy(isFilterSheetOpen = open) }
-    }
-
-    fun onTransactionClicked(transaction: Transaction) {
-        _uiState.update {
-            it.copy(
-                isDetailDialogOpen = true,
-                selectedTransaction = transaction,
-                selectedTransactionId = transaction.id,
-            )
-        }
-    }
-
-    fun onDismissDetailDialog() {
-        _uiState.update {
-            it.copy(
-                isDetailDialogOpen = false,
-                selectedTransaction = null,
-                selectedTransactionId = null,
-            )
-        }
-    }
-
     fun onDeleteTransaction(transaction: Transaction) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isDeleting = true, isDetailDialogOpen = false) }
+            _uiState.update { it.copy(isDeleting = true) }
             try {
                 val deleted = repository.deleteTransaction(transaction.id)
                 if (deleted != null) {
@@ -112,7 +77,6 @@ class TransactionsViewModel(
                             lastDeletedId = transaction.id,
                             lastDeletedTransaction = transaction,
                             totalCount = (it.totalCount - 1).coerceAtLeast(0),
-                            snackbarMessage = "Transaction deleted",
                         )
                     }
                     loadSummary()
@@ -136,7 +100,6 @@ class TransactionsViewModel(
                     it.copy(
                         lastDeletedTransaction = null,
                         lastDeletedId = null,
-                        snackbarMessage = null,
                     )
                 }
                 loadInitialData()
@@ -187,31 +150,12 @@ class TransactionsViewModel(
         }
     }
 
-    fun onScrollToTopClicked() {
-        viewModelScope.launch {
-            eventChannel.send(UiEvent.ScrollToTop)
-        }
-    }
-
-    fun onScrollPositionChanged(firstVisibleIndex: Int) {
-        _uiState.update {
-            it.copy(
-                firstVisibleItemIndex = firstVisibleIndex,
-                showScrollToTopButton = firstVisibleIndex > 3,
-            )
-        }
-    }
-
     fun onExportClicked() {
-        _uiState.update { it.copy(exportRequested = true) }
         viewModelScope.launch {
             eventChannel.send(UiEvent.NavigateToExport)
         }
     }
 
-    fun onSnackbarDismissed() {
-        _uiState.update { it.copy(snackbarMessage = null) }
-    }
 
     private fun loadInitialData() {
         loadJob?.cancel()

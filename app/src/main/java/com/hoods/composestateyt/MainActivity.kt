@@ -9,7 +9,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hoods.composestateyt.data.FakeTransactionRepository
 import com.hoods.composestateyt.ui.theme.ComposeStateYTTheme
-import com.hoods.composestateyt.ui.transaction.TransactionsScreen
+import com.hoods.composestateyt.ui.transaction.TransactionsRoute
 import com.hoods.composestateyt.ui.transaction.TransactionsViewModel
 import com.hoods.composestateyt.ui.transaction.TransactionsViewModelFactory
 
@@ -23,23 +23,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             ComposeStateYTTheme {
                 val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
-                TransactionsScreen(
-                    uiState = uiState,
-                    events = viewModel.events,
-                    onQueryChanged = viewModel::onQueryChanged,
-                    onCategorySelected = viewModel::onCategorySelected,
-                    onTypeFilterChanged = viewModel::onTypeFilterChanged,
-                    onPeriodFilterChanged = viewModel::onPeriodFilterChanged,
-                    onFilterSheetVisibilityChanged = viewModel::onFilterSheetVisibilityChanged,
-                    onTransactionClicked = viewModel::onTransactionClicked,
-                    onDismissDetailDialog = viewModel::onDismissDetailDialog,
-                    onDeleteTransaction = viewModel::onDeleteTransaction,
-                    onUndoDelete = viewModel::onUndoDelete,
-                    onLoadMore = viewModel::onLoadMore,
-                    onRetry = viewModel::onRetry,
-                    onScrollToTop = viewModel::onScrollToTopClicked,
-                    onScrollPositionChanged = viewModel::onScrollPositionChanged,
-                    onExportClicked = viewModel::onExportClicked,
+                TransactionsRoute(
+                    viewModel = viewModel,
                     onExport = {
                         Toast.makeText(this, "Export destination navigated", Toast.LENGTH_SHORT).show()
                     },

@@ -97,16 +97,6 @@ class TransactionsViewModelTest {
             isDeleting = false,
             lastDeletedId = null,
             lastDeletedTransaction = null,
-            isFilterSheetOpen = false,
-            isDetailDialogOpen = false,
-            selectedTransactionId = null,
-            selectedTransaction = null,
-            scrollToTopRequested = false,
-            showScrollToTopButton = false,
-            firstVisibleItemIndex = 0,
-            snackbarMessage = null,
-            exportRequested = false,
-            isExportSuccessDialogOpen = false,
             searchDebounceMillis = 300L,
         )
 
